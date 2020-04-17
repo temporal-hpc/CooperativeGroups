@@ -93,16 +93,17 @@ __host__ void printVec(int *a, int n){
 }
 
 int main(int argc, char **argv){
-	if(argc != 4){
+	if(argc != 5){
 		printf("Error!, Ejecutar ./prog <N> <REPEATS> <seed>\n");
 		exit(1);
 	}
 	int n = atoi(argv[1]);
 	int REPEATS = atoi(argv[2]);
 	int seed = atoi(argv[3]);
+	int dev = atoi(argv[4]);
 	seed = seed==0 ? time(NULL) : seed;
 	srand(seed);
-	cudaSetDevice(1);
+	cudaSetDevice(dev);
 	printf("seed = %i\n",seed);
 
 	cudaEvent_t start, stop;
