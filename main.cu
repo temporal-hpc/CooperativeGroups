@@ -8,6 +8,7 @@ using namespace cooperative_groups;
 __device__ inline int h(TYPE a, TYPE b, TYPE c){
 	return (a+b+c) & 0x1;
 }
+/*
 __global__ void kernel(TYPE *s, TYPE *a, TYPE *b, int n){
 	int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	//if(tid < n ){
@@ -22,33 +23,37 @@ __global__ void kernel_cg(TYPE *s, TYPE *a, TYPE *b, int n, int REPEATS){
 		//}
 		sync(this_grid());
 	}
-}
+}*/
 __global__ void ac(TYPE *vec1, TYPE *vec2, int n){
 	int tid = blockDim.x * blockIdx.x + threadIdx.x+1;
 
-	vec2[tid] = h(vec1[(tid-1)], vec1[tid], vec1[(tid+1)]);
+	if(tid < n - 1)
+		vec2[tid] = h(vec1[(tid-1)], vec1[tid], vec1[(tid+1)]);
 		
 }
-__global__ void ac_cg(TYPE *vec1, TYPE *vec2, int n, int REPEATS){
-	int tid = blockDim.x * blockIdx.x + threadIdx.x+1;
+__global__ void ac_cg(TYPE *vec1, TYPE *vec2, int n, int REPEATS, int cpt){
+	int tid = blockDim.x * blockIdx.x + threadIdx.x + 1;
+	int gridSize = gridDim.x * blockDim.x;
+
+	//if (tid == 1) printf("%i\n", gridSize);
 	grid_group grid = this_grid();
 
 	for(int i = 0; i < REPEATS; i++){
-		vec2[tid] = h(vec1[(tid-1)], vec1[tid], vec1[(tid+1)]);
-		sync(grid);
-
-		vec1[tid] = h(vec2[(tid-1)], vec2[tid], vec2[(tid+1)]);
-
-		sync(grid);
+		for(int j = 0; j < cpt; j++){
+			int ntid = j * gridSize + tid;
+			if(ntid < n - 1 )
+				vec2[ntid] = h(vec1[ntid - 1], vec1[ntid], vec1[ntid + 1]);
+			sync(grid);
+		}
+		for(int j = 0; j < cpt; j++){
+			int ntid = j * gridSize + tid;
+			if(ntid < n - 1 )
+				vec1[ntid] = h(vec2[ntid - 1], vec2[ntid], vec2[ntid + 1]);
+			sync(grid);
+		}
 	}
 }
 
-/*
-__host__ void fillMatrix(TYPE *a, int n){
-	for(int i = 0; i < n * n; i++){
-		a[i] = rand()%3-1;
-	}
-}*/
 
 __host__ void fillVector(TYPE *a, int n){
 	for(int i = 0; i < n; i++){
@@ -56,7 +61,7 @@ __host__ void fillVector(TYPE *a, int n){
 	}
 	a[0]=0;
 	a[n]=0;
-}
+ }
 __host__ void copyVec(TYPE *a, TYPE *b, int n){	
 	for(int i = 0; i < n; i++){
 		b[i] = a[i];
@@ -104,6 +109,10 @@ int main(int argc, char **argv){
 	seed = seed==0 ? time(NULL) : seed;
 	srand(seed);
 	cudaSetDevice(dev);
+	
+	cudaDeviceProp deviceProp;
+	cudaGetDeviceProperties(&deviceProp, dev);
+	
 	printf("seed = %i\n",seed);
 
 	cudaEvent_t start, stop;
@@ -185,21 +194,38 @@ int main(int argc, char **argv){
 	//Cooperative groups
 	copyVec(final_cg, a, n+2);
 
+	int numBlocksPerSm = 0;
+	int maxNumThreads = 0;
+	int cellPerThread = 1;
+
+	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, ac_cg, BSIZE1D, 0);
+	maxNumThreads = numBlocksPerSm * deviceProp.multiProcessorCount * BSIZE1D;
+	printf("\nMaxThreads: %i\n", maxNumThreads);
+
+	if(maxNumThreads < n){
+		cellPerThread = (n + maxNumThreads - 1) / maxNumThreads;
+		printf("CellPerThread: %i\n", cellPerThread);
+		grid = dim3( ( ( (n + cellPerThread - 1) / cellPerThread) + block.x - 1) /block.x, 1, 1 );
+		printf("block= %i x %i x %i    grid = %i x %i x %i\n", block.x, block.y, block.z, grid.x, grid.y, grid.z);
+	}
+
 //	printVec(a, n);
 //	printVec(final_cg, n);
 	cudaMemcpy(a_d, final_cg, sizeof(TYPE) * (n+2), cudaMemcpyHostToDevice);
 
-    	void* params[4];
+    	void* params[5];
 
     	params[0] = (void *)&a_d;  
     	params[1] = (void *)&b_d;
     	params[2] = (void *)&n;
     	params[3] = (void *)&REPEATS;
+    	params[4] = (void *)&cellPerThread;
 
 	cudaEventRecord(start);
 
     	cudaLaunchCooperativeKernel((void *) ac_cg, grid, block, params, 0, NULL);
     	cudaDeviceSynchronize();
+
 
 	cudaEventRecord(stop);
 	cudaDeviceSynchronize();

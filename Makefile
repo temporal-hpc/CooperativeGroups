@@ -7,3 +7,6 @@ SRC=main.cu
 BINARY=bin/prog
 all:
 	nvcc ${PARAMS} ${SRC} -o ${BINARY}
+
+test:
+	nvcc ${PARAMS} test.cu -o bin/test
